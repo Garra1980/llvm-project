@@ -254,12 +254,21 @@ LogicalResult LoadNdOp::verify() {
     tdescShape.insert(it, array_len);
   }
 
-  if (!tdescTy.getSGMapAttr() && tdescShape != valueShape)
-    return emitOpError() << "Result shape doesn't match TensorDesc shape."
-                         << "The expected shape is " << makeString(tdescShape)
-                         << ". But the given shape is "
-                         << makeString(valueShape) << ".\n";
+  // if (!tdescTy.getSGMapAttr() && tdescShape != valueShape)
+  //   return emitOpError() << "Result shape doesn't match TensorDesc shape."
+  //                        << "The expected shape is " <<
+  //                        makeString(tdescShape)
+  //                        << ". But the given shape is "
+  //                        << makeString(valueShape) << ".\n";
   return success();
+}
+
+void LoadNdOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (llvm::isa<TensorDescType>(getTensorDescType()))
+    effects.emplace_back(MemoryEffects::Read::get(), &getTensorDescMutable(),
+                         SideEffects::DefaultResource::get());
 }
 
 //===----------------------------------------------------------------------===//
@@ -294,7 +303,6 @@ LogicalResult StoreNdOp::verify() {
                          << "The expected shape is " << makeString(tdescShape)
                          << ". But the given shape is "
                          << makeString(valueShape) << ".\n";
-
   return success();
 }
 
