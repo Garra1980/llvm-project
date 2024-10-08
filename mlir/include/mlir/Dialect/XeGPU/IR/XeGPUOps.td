@@ -324,12 +324,8 @@ def XeGPU_LoadNdOp : XeGPU_Op<"load_nd", [AllElementTypesMatch<["value", "Tensor
   let hasVerifier = 1;
 }
 
-<<<<<<< HEAD
-def XeGPU_StoreNdOp : XeGPU_Op<"store_nd", [AllElementTypesMatch<["value", "TensorDesc"]>]> {
-=======
 def XeGPU_StoreNdOp : XeGPU_Op<"store_nd", [
                                        AllElementTypesMatch<["value", "TensorDesc"]>]> {
->>>>>>> d6de7d993364 ([MLIR][XeGPU] Add xegpu-distribute-to-wi pass)
   let summary = "stores a n-D block register region back to memory, currently only supports 2D";
 
   let description = [{

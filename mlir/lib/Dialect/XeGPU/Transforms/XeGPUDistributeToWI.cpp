@@ -685,7 +685,7 @@ LogicalResult WarpOpLoadNd::matchAndRewrite(vector::WarpExecuteOnLane0Op warpOp,
   //     cast<xegpu::LoadNdOp>(rewriter.clone(*loadOp.getOperation()));
   auto newLoadOp = rewriter.create<xegpu::LoadNdOp>(
       loadOp.getLoc(), distributedVectorType, loadOp.getTensorDesc(),
-      loadOp.getPackedAttr(), loadOp.getTransposeAttr(), loadOp.getL1HintAttr(),
+      loadOp.getPackedAttr(), loadOp.getTransposeAttr(), /*transpose_bit_width*/nullptr, loadOp.getL1HintAttr(),
       loadOp.getL2HintAttr(), loadOp.getL3HintAttr());
 
   DBGS() << "IR after load distribution:\n" << newWarpOp << "\n";
