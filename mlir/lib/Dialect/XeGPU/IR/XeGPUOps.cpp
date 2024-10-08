@@ -237,7 +237,7 @@ LogicalResult LoadNdOp::verify() {
       emitWarning("Invalid transpose attr. It is ignored.");
   }
 
-  if (getPacked()) {
+  if (getPacked() || getTransposeBitWidth() == 32) {
     if (tdescTy.getRank() == 2) {
       const int axis = 0;
       auto vnni_factor = valueShape.back();
@@ -254,7 +254,7 @@ LogicalResult LoadNdOp::verify() {
     tdescShape.insert(it, array_len);
   }
 
-  if (tdescShape != valueShape)
+  if (!tdescTy.getSGMapAttr() && tdescShape != valueShape)
     return emitOpError() << "Result shape doesn't match TensorDesc shape."
                          << "The expected shape is " << makeString(tdescShape)
                          << ". But the given shape is "
@@ -286,6 +286,14 @@ LogicalResult StoreNdOp::verify() {
 
   if (!isWriteHintOrNone(getL3HintAttr()))
     return emitOpError("invlid l3_hint: ") << getL3HintAttr();
+
+  auto tdescShape = getShapeOf(dstTy);
+  auto valueShape = getShapeOf(valTy);
+  if (!dstTy.getSGMapAttr() && tdescShape != valueShape)
+    return emitOpError() << "Result shape doesn't match TensorDesc shape."
+                         << "The expected shape is " << makeString(tdescShape)
+                         << ". But the given shape is "
+                         << makeString(valueShape) << ".\n";
 
   return success();
 }
