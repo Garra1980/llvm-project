@@ -1646,6 +1646,48 @@ LogicalResult ResolveLayoutConflicts::assignResultLayout(OpResult &result) {
   return success();
 }
 
+/// Clones `op` right after itself and stamps `layout` on the clone's result.
+///
+/// Shape-preserving operands of the clone that are themselves trivially
+/// rematerializable are cloned as well and given the same `layout`. Without
+/// this, the clone keeps sharing a definition whose layout was already fixed
+/// for a different consumer, so the conflict is merely pushed one level up the
+/// chain and later surfaces as invalid IR during WG-to-SG distribution. For
+/// example, `vector.step` feeding two `arith.index_castui` that need different
+/// layouts must be rematerialized along with each cast.
+static Operation *rematerializeWithLayout(OpBuilder &builder, Operation *op,
+                                          xegpu::DistributeLayoutAttr layout) {
+  builder.setInsertionPointAfter(op);
+  Operation *clone = builder.clone(*op);
+  OpResult cloneResult = clone->getResult(0);
+  // Drop the inherited producer layout so the new layout takes effect
+  xegpu::removeLayoutAttr(cloneResult);
+  xegpu::setDistributeLayoutAttr(cloneResult, layout);
+
+  auto resultTy = dyn_cast<VectorType>(cloneResult.getType());
+  if (!resultTy)
+    return clone;
+
+  for (OpOperand &operand : clone->getOpOperands()) {
+    Value value = operand.get();
+    // Only shape-preserving (elementwise-like) operands share the result
+    // layout; anything reshaping is left to `xegpu.convert_layout`.
+    auto operandTy = dyn_cast<VectorType>(value.getType());
+    if (!operandTy || operandTy.getShape() != resultTy.getShape())
+      continue;
+    // Already carries the layout this clone needs: keep sharing it.
+    if (auto operandLayout = xegpu::getDistributeLayoutAttr(value);
+        operandLayout && operandLayout.isEqualTo(layout))
+      continue;
+    Operation *defOp = value.getDefiningOp();
+    if (!defOp || defOp->getNumResults() != 1 ||
+        !xegpu::isTriviallyRematerializable(defOp))
+      continue;
+    operand.set(rematerializeWithLayout(builder, defOp, layout)->getResult(0));
+  }
+  return clone;
+}
+
 LogicalResult
 ResolveLayoutConflicts::resolveVectorConsumer(OpOperand &operand) {
   Value vectorValue = operand.get();
@@ -1705,13 +1747,9 @@ ResolveLayoutConflicts::resolveVectorConsumer(OpOperand &operand) {
       producerOp && producerOp->getNumResults() == 1 &&
       isa<OpResult>(vectorValue) &&
       xegpu::isTriviallyRematerializable(producerOp)) {
-    builder.setInsertionPointAfter(producerOp);
-    Operation *clone = builder.clone(*producerOp);
-    OpResult cloneResult = clone->getResult(0);
-    // Drop the inherited producer layout so the new layout takes effect
-    xegpu::removeLayoutAttr(cloneResult);
-    xegpu::setDistributeLayoutAttr(cloneResult, consumerLayout);
-    operand.set(cloneResult);
+    Operation *clone =
+        rematerializeWithLayout(builder, producerOp, consumerLayout);
+    operand.set(clone->getResult(0));
     return success();
   }
 

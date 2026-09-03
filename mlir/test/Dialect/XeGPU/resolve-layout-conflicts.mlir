@@ -387,8 +387,11 @@ gpu.func @step_clone_via_anchor(%arg0: i64, %arg1: memref<32x32xf32>) kernel {
 // uses, and the derived value's producer chain is trivially rematerializable
 // (because step and constant stride are themselves trivially rematerializable),
 // the resolver clones the arith.muli instead of inserting an xegpu.convert_layout.
+// The whole chain is cloned: each arith.muli gets its own step and stride, so
+// no definition is left shared between the two conflicting layouts.
 // CHECK-LABEL: gpu.func @step_muli_clone_via_anchor
 // CHECK-DAG:     vector.step {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 32]>, dims = [0]>} : vector<32xindex>
+// CHECK-DAG:     vector.step {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 1]>, dims = [1]>} : vector<32xindex>
 // CHECK-DAG:     arith.muli {{.*}} {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 32]>, dims = [0]>} : vector<32xindex>
 // CHECK-DAG:     arith.muli {{.*}} {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 1]>, dims = [1]>} : vector<32xindex>
 // CHECK-NOT:     xegpu.convert_layout {{.*}} : vector<32xindex>
@@ -405,6 +408,29 @@ gpu.func @step_muli_clone_via_anchor(%arg0: i64, %arg1: memref<32x32xf32>) kerne
       : i64, vector<32x32xindex>, vector<32x32xi1> -> vector<32x32xf32>
   %tdesc = xegpu.create_nd_tdesc %arg1 : memref<32x32xf32> -> !xegpu.tensor_desc<32x32xf32>
   xegpu.store_nd %v, %tdesc[0, 0] <{layout = #xegpu.layout<sg_layout = [32, 1], sg_data = [1, 32]>}> : vector<32x32xf32>, !xegpu.tensor_desc<32x32xf32>
+  gpu.return
+}
+
+// Same chain as above, but the rematerialized op changes element type
+// (index -> i32), as in a causal attention mask where one `vector.step` feeds
+// both a row-index and a column-index vector. Cloning only the cast would
+// leave `vector.step` shared between the two conflicting layouts, and the
+// distributed cast would then mismatch its operand.
+// CHECK-LABEL: gpu.func @step_index_castui_clone_chain
+// CHECK-DAG:     vector.step {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 32]>, dims = [0]>} : vector<32xindex>
+// CHECK-DAG:     vector.step {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 1]>, dims = [1]>} : vector<32xindex>
+// CHECK-DAG:     arith.index_castui {{.*}} {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 32]>, dims = [0]>} : vector<32xindex> to vector<32xi32>
+// CHECK-DAG:     arith.index_castui {{.*}} {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 1]>, dims = [1]>} : vector<32xindex> to vector<32xi32>
+// CHECK-NOT:     xegpu.convert_layout {{.*}} : vector<32xi32>
+gpu.func @step_index_castui_clone_chain(%arg0: memref<32x32xi32>, %arg1: memref<32x1xi32>) kernel {
+  %step = vector.step {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 32]>, dims = [0]>} : vector<32xindex>
+  %cast = arith.index_castui %step {layout_result_0 = #xegpu.slice<#xegpu.layout<sg_layout = [32, 1], sg_data = [1, 32]>, dims = [0]>} : vector<32xindex> to vector<32xi32>
+  %rowb = vector.broadcast %cast {layout_result_0 = #xegpu.layout<sg_layout = [32, 1], sg_data = [1, 32]>} : vector<32xi32> to vector<32x32xi32>
+  %tdesc = xegpu.create_nd_tdesc %arg0 : memref<32x32xi32> -> !xegpu.tensor_desc<32x32xi32>
+  xegpu.store_nd %rowb, %tdesc[0, 0] <{layout = #xegpu.layout<sg_layout = [32, 1], sg_data = [1, 32]>}> : vector<32x32xi32>, !xegpu.tensor_desc<32x32xi32>
+  %col2d = vector.shape_cast %cast {layout_result_0 = #xegpu.layout<sg_layout = [32, 1], sg_data = [1, 1]>} : vector<32xi32> to vector<32x1xi32>
+  %tdesc_col = xegpu.create_nd_tdesc %arg1 : memref<32x1xi32> -> !xegpu.tensor_desc<32x1xi32>
+  xegpu.store_nd %col2d, %tdesc_col[0, 0] <{layout = #xegpu.layout<sg_layout = [32, 1], sg_data = [1, 1]>}> : vector<32x1xi32>, !xegpu.tensor_desc<32x1xi32>
   gpu.return
 }
 
